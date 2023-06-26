@@ -3,11 +3,12 @@ from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chat_models import ChatOpenAI
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationalRetrievalChain
-from htmlTemplates import css, bot_template, user_template
+from langchain.vectorstores import Chroma
+from langchain.llms import OpenAI
+from htmlTemplates import css
+from langchain.chains.question_answering import load_qa_chain
+from langchain.callbacks import get_openai_callback
+from langchain.prompts import PromptTemplate
 
 def main():
     load_dotenv()
@@ -17,10 +18,19 @@ def main():
 
     if "conversation" not in st.session_state:
         st.session_state.conversation = None
+    if "vectorstore" not in st.session_state:
+        st.session_state.vectorstore = None
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = None
+    if "max_docs_result" not in st.session_state:
+        st.session_state.max_docs_result = None
 
+    max_result = st.number_input("Max. documents result:", value=2)
+    
     user_question = st.text_input("Ask a question about your documents:")
+
+    if max_result:
+        st.session_state.max_docs_result = max_result
 
     if user_question:
         handle_userinput(user_question)
@@ -34,8 +44,8 @@ def main():
             with st.spinner("Processing"):
                 raw_text = get_pdf_text(pdf_docs)
                 text_chunks = get_text_chunks(raw_text)
-                vectorstore = get_vectorstore(text_chunks)
-                st.session_state.conversation = get_conversation_chain(vectorstore)
+                st.session_state.vectorstore = get_vectorstore(text_chunks)
+                st.session_state.conversation = get_conversation_chain()
 
 def get_pdf_text(pdf_docs):
     text = ""
@@ -57,36 +67,31 @@ def get_text_chunks(text):
 
 def get_vectorstore(text_chunks):
     embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
+    vectorstore = Chroma.from_texts(text_chunks, embeddings, metadatas=[{"source": str(i)} for i in range(len(text_chunks))]).as_retriever()
     return vectorstore
 
-def get_conversation_chain(vectorstore):
-    llm = ChatOpenAI()
+def get_conversation_chain():
+    prompt_template = """Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
+    {context}
+    Question: {question}
+    Answer in Spanish:"""
 
-    memory = ConversationBufferMemory(memory_key='chat_history', input_key='question', output_key='answer', return_messages=True)
-    conversation_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever(),
-        memory=memory,
-        return_source_documents=True
+    PROMPT = PromptTemplate(
+        template=prompt_template, input_variables=["context", "question"]
     )
-    return conversation_chain
+    return load_qa_chain(OpenAI(temperature=0), chain_type="stuff", prompt=PROMPT, verbose=True)
 
 def handle_userinput(user_question):
-    chat_history = st.session_state.chat_history if st.session_state.chat_history != None else []
-    response = st.session_state.conversation({ 'question': user_question, 'chat_history': chat_history })
-    st.session_state.chat_history = response['chat_history']
+    max_docs_result = st.session_state.max_docs_result 
+    documents = st.session_state.vectorstore.vectorstore.similarity_search(user_question, k=max_docs_result)
 
-    st.success(response['answer'])
-    st.info(response['source_documents'])
-
-    for i, message in enumerate(st.session_state.chat_history):
-        #Human message
-        if i % 2 == 0:
-            st.write(user_template.replace("{{MSG}}", message.content), unsafe_allow_html=True)
-        #IA message
-        else:
-            st.write(bot_template.replace("{{MSG}}", message.content), unsafe_allow_html=True)
+    with get_openai_callback() as cb:
+        result = st.session_state.conversation({"input_documents": documents, "question": user_question})
+        st.warning(f"Total Tokens: {cb.total_tokens}")
+        st.warning(f"Estimated cost: {cb.total_cost}")
+        st.success(result['output_text'])
+        for doc in result['input_documents']:
+            st.info(doc)
 
 if __name__ == '__main__':
     main()
