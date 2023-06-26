@@ -1,5 +1,4 @@
 import streamlit as st
-from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.embeddings import OpenAIEmbeddings
@@ -11,7 +10,6 @@ from langchain.callbacks import get_openai_callback
 from langchain.prompts import PromptTemplate
 
 def main():
-    load_dotenv()
     st.set_page_config(page_title="Chat with multiple PDFs", page_icon=":books:")
     st.header("Chat with multiple PDFs :books:")
     st.write(css, unsafe_allow_html=True)
@@ -24,28 +22,35 @@ def main():
         st.session_state.chat_history = None
     if "max_docs_result" not in st.session_state:
         st.session_state.max_docs_result = None
+    if "apikey" not in st.session_state:
+        st.session_state.apikey = None
 
-    max_result = st.number_input("Max. documents result:", value=2)
-    
-    user_question = st.text_input("Ask a question about your documents:")
+    api_key = st.text_input("Enter your API key", type = "password")
 
-    if max_result:
-        st.session_state.max_docs_result = max_result
+    if api_key:
+        st.session_state.apikey = api_key
+        max_result = st.number_input("Max. documents result:", value=2)
+        user_question = st.text_input("Ask a question about your documents:")
 
-    if user_question:
-        handle_userinput(user_question)
+        if max_result:
+            st.session_state.max_docs_result = max_result
 
-    with st.sidebar:
-        st.subheader("Upload your documents here!")
-        
-        pdf_docs = st.file_uploader("Load them and then hit process", accept_multiple_files=True, type="pdf")
-        
-        if st.button("Process"):
-            with st.spinner("Processing"):
-                raw_text = get_pdf_text(pdf_docs)
-                text_chunks = get_text_chunks(raw_text)
-                st.session_state.vectorstore = get_vectorstore(text_chunks)
-                st.session_state.conversation = get_conversation_chain()
+        if user_question:
+            handle_userinput(user_question)
+
+        with st.sidebar:
+            st.subheader("Upload your documents here!")
+            
+            pdf_docs = st.file_uploader("Load them and then hit process", accept_multiple_files=True, type="pdf")
+            
+            if st.button("Process"):
+                with st.spinner("Processing"):
+                    raw_text = get_pdf_text(pdf_docs)
+                    text_chunks = get_text_chunks(raw_text)
+                    st.session_state.vectorstore = get_vectorstore(text_chunks)
+                    st.session_state.conversation = get_conversation_chain()
+    else:
+        st.warning("Enter your OPENAI API-KEY. Get your OpenAI API key from [here](https://platform.openai.com/account/api-keys).\n")
 
 def get_pdf_text(pdf_docs):
     text = ""
@@ -66,7 +71,7 @@ def get_text_chunks(text):
     return chunks
 
 def get_vectorstore(text_chunks):
-    embeddings = OpenAIEmbeddings()
+    embeddings = OpenAIEmbeddings(openai_api_key=st.session_state.apikey)
     vectorstore = Chroma.from_texts(text_chunks, embeddings, metadatas=[{"source": str(i)} for i in range(len(text_chunks))]).as_retriever()
     return vectorstore
 
@@ -79,7 +84,7 @@ def get_conversation_chain():
     PROMPT = PromptTemplate(
         template=prompt_template, input_variables=["context", "question"]
     )
-    return load_qa_chain(OpenAI(temperature=0), chain_type="stuff", prompt=PROMPT, verbose=True)
+    return load_qa_chain(OpenAI(temperature=0, openai_api_key=st.session_state.apikey), chain_type="stuff", prompt=PROMPT, verbose=True)
 
 def handle_userinput(user_question):
     max_docs_result = st.session_state.max_docs_result 
