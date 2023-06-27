@@ -24,16 +24,21 @@ def main():
         st.session_state.max_docs_result = None
     if "apikey" not in st.session_state:
         st.session_state.apikey = None
+    if "temperature" not in st.session_state:
+        st.session_state.temperature = None
 
     api_key = st.text_input("Enter your API key", type = "password")
 
     if api_key:
         st.session_state.apikey = api_key
         max_result = st.number_input("Max. documents result:", value=2)
+        temperature = st.number_input("Desired temperature:", value=1)
         user_question = st.text_input("Ask a question about your documents:")
 
         if max_result:
             st.session_state.max_docs_result = max_result
+        if temperature:
+            st.session_state.temperature = temperature
 
         if user_question:
             handle_userinput(user_question)
@@ -84,7 +89,8 @@ def get_conversation_chain():
     PROMPT = PromptTemplate(
         template=prompt_template, input_variables=["context", "question"]
     )
-    return load_qa_chain(OpenAI(temperature=0, openai_api_key=st.session_state.apikey), chain_type="stuff", prompt=PROMPT, verbose=True)
+    temperature = st.session_state.temperature
+    return load_qa_chain(OpenAI(temperature=temperature, openai_api_key=st.session_state.apikey), chain_type="stuff", prompt=PROMPT, verbose=True)
 
 def handle_userinput(user_question):
     max_docs_result = st.session_state.max_docs_result 
